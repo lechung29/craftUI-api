@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import Users, { IResponseStatus, IUserStatus, type IUserData } from "../../models/users/usersModel.js";
 import PRTokens from "../../models/otps/PRTokensModel.js";
 import type { AuthenticatedRequest } from "../../middlewares/auth.js";
+import { Resend } from "resend";
 
 //#region Register New User
 
@@ -369,6 +370,7 @@ const refreshToken: RequestHandler = async (req: Request, res: Response, _next: 
 
 const requestPasswordRecovery: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
     const { email } = req.body;
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
     const validCustomer = await Users.findOne({ email });
     if (!validCustomer) {
@@ -388,16 +390,6 @@ const requestPasswordRecovery: RequestHandler = async (req: Request, res: Respon
     }
 
     try {
-        const transporter = nodemailer.createTransport({
-            host: "smtp.gmail.com",
-            port: 465,
-            secure: true,   
-            auth: {
-                user: process.env.MY_EMAIL,
-                pass: process.env.MY_PASSWORD,
-            },
-        });
-
         const generationToken = uuidv4().replace(/-/g, "");
         const code = generationToken
             .split("")
@@ -406,8 +398,8 @@ const requestPasswordRecovery: RequestHandler = async (req: Request, res: Respon
             .join("");
         const digits = code.split("");
 
-        const mail_configs = {
-            from: process.env.MY_EMAIL,
+        const { error } = await resend.emails.send({
+            from: "CraftUI <onboarding@resend.dev>",
             to: email,
             subject: "Your CraftUI password reset code",
             html: `<!DOCTYPE html>
@@ -471,26 +463,26 @@ const requestPasswordRecovery: RequestHandler = async (req: Request, res: Respon
   </div>
 </body>
 </html>`,
-        };
+        });
 
-        transporter.sendMail(mail_configs, async function (error: any, info: any) {
-            if (error) {
-                return res.status(500).send({
-                    status: IResponseStatus.Error,
-                    message: "An error occurred while sending the verification code. Please try again",
-                });
-            }
-            const newOtp = new PRTokens({
-                token: code,
-                customerEmail: email,
+        if (error) {
+            console.error("Resend error:", error);
+            return res.status(500).send({
+                status: IResponseStatus.Error,
+                message: "An error occurred while sending the verification code.",
             });
+        }
 
-            await newOtp.save();
+        const newOtp = new PRTokens({
+            token: code,
+            customerEmail: email,
+        });
 
-            return res.status(200).send({
-                status: IResponseStatus.Success,
-                message: "Send OTP successfully",
-            });
+        await newOtp.save();
+
+        return res.status(200).send({
+            status: IResponseStatus.Success,
+            message: "Send OTP successfully",
         });
     } catch (error) {
         return res.status(500).send({
