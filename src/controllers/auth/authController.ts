@@ -405,7 +405,7 @@ const requestPasswordRecovery: RequestHandler = async (req, res) => {
     const digits = code.split("");
 
     const newOtp = new PRTokens({
-        token: generationToken,
+        token: code,
         customerEmail: email,
     });
 
