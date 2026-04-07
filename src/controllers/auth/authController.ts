@@ -368,38 +368,52 @@ const refreshToken: RequestHandler = async (req: Request, res: Response, _next: 
 
 //#region request password recovery
 
-const requestPasswordRecovery: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
+const requestPasswordRecovery: RequestHandler = async (req, res) => {
     const { email } = req.body;
-    const resend = new Resend(process.env.RESEND_API_KEY);
 
     const validCustomer = await Users.findOne({ email });
     if (!validCustomer) {
         return res.status(400).send({
             status: IResponseStatus.Error,
             fieldError: "email",
-            message: "The email address you entered is not associated with any account. Please check your email or register if you don't have an account",
+             message: "The email address you entered is not associated with any account. Please check your email or register if you don't have an account",
         });
     }
 
     const existingOtp = await PRTokens.findOne({ customerEmail: email });
     if (existingOtp) {
         return res.status(200).send({
-            status: IResponseStatus.Success,
+            requestStatus: IResponseStatus.Success,
             message: "OTP sent successfully",
         });
     }
 
-    try {
-        const generationToken = uuidv4().replace(/-/g, "");
+    const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+            user: process.env.MY_EMAIL,
+            pass: process.env.MY_PASSWORD,
+        },
+    });
+
+    const generationToken = uuidv4().replace(/-/g, "");
         const code = generationToken
             .split("")
             .sort(() => 0.5 - Math.random())
             .slice(0, 6)
             .join("");
-        const digits = code.split("");
+    const digits = code.split("");
 
-        const { error } = await resend.emails.send({
-            from: "CraftUI <onboarding@resend.dev>",
+    const newOtp = new PRTokens({
+        token: generationToken,
+        customerEmail: email,
+    });
+
+    try {
+        await newOtp.save();
+
+        await transporter.sendMail({
+            from: process.env.MY_EMAIL,
             to: email,
             subject: "Your CraftUI password reset code",
             html: `<!DOCTYPE html>
@@ -465,28 +479,14 @@ const requestPasswordRecovery: RequestHandler = async (req: Request, res: Respon
 </html>`,
         });
 
-        if (error) {
-            console.error("Resend error:", error);
-            return res.status(500).send({
-                status: IResponseStatus.Error,
-                message: "An error occurred while sending the verification code.",
-            });
-        }
-
-        const newOtp = new PRTokens({
-            token: code,
-            customerEmail: email,
-        });
-
-        await newOtp.save();
-
         return res.status(200).send({
-            status: IResponseStatus.Success,
+            requestStatus: IResponseStatus.Success,
             message: "Send OTP successfully",
         });
     } catch (error) {
+        await PRTokens.deleteOne({ customerEmail: email, token: generationToken }).catch(() => {});
         return res.status(500).send({
-            status: IResponseStatus.Error,
+            requestStatus: IResponseStatus.Error,
             message: "A system error occurred. Please try again later",
         });
     }
